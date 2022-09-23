@@ -19,8 +19,10 @@ package org.openapitools.codegen;
 
 import io.swagger.v3.oas.models.ExternalDocumentation;
 import io.swagger.v3.oas.models.tags.Tag;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.*;
+import java.util.stream.Stream;
 
 public class CodegenOperation {
     public final List<CodegenProperty> responseHeaders = new ArrayList<CodegenProperty>();

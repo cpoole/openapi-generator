@@ -16,23 +16,43 @@
 
 package org.openapitools.codegen.languages;
 
+import com.github.jknack.handlebars.internal.lang3.StringUtils;
+import io.swagger.v3.oas.models.parameters.CookieParameter;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.parameters.RequestBody;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.media.Schema;
+import org.checkerframework.checker.units.qual.A;
 import org.openapitools.codegen.CliOption;
 import org.openapitools.codegen.CodegenConstants;
+import org.openapitools.codegen.CodegenModelFactory;
+import org.openapitools.codegen.CodegenModelType;
 import org.openapitools.codegen.CodegenOperation;
+import org.openapitools.codegen.CodegenParameter;
+import org.openapitools.codegen.CodegenSecurity;
 import org.openapitools.codegen.CodegenType;
 import org.openapitools.codegen.SupportingFile;
 import org.openapitools.codegen.meta.features.*;
 import org.openapitools.codegen.model.ModelMap;
 import org.openapitools.codegen.model.OperationMap;
 import org.openapitools.codegen.model.OperationsMap;
+import org.openapitools.codegen.utils.ModelUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class GoGinServerCodegen extends AbstractGoCodegen {
 
@@ -42,15 +62,17 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
     protected int serverPort = 8080;
     protected String projectName = "openapi-server";
     protected String apiPath = "go";
+    public String sup = "foo";
 
     public GoGinServerCodegen() {
         super();
 
         modifyFeatureSet(features -> features
                 .includeDocumentationFeatures(DocumentationFeature.Readme)
-                .wireFormatFeatures(EnumSet.of(WireFormatFeature.JSON, WireFormatFeature.XML))
-                .securityFeatures(EnumSet.noneOf(
-                        SecurityFeature.class
+                .wireFormatFeatures(EnumSet.of(WireFormatFeature.JSON))
+                .securityFeatures(EnumSet.of(
+                        SecurityFeature.BearerToken,
+                        SecurityFeature.BasicAuth
                 ))
                 .excludeGlobalFeatures(
                         GlobalFeature.XMLStructureDefinitions,
@@ -78,15 +100,6 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         modelTemplateFiles.put(
                 "model.mustache",
                 ".go");
-
-        /*
-         * Api classes.  You can write classes for each Api file with the apiTemplateFiles map.
-         * as with models, add multiple entries with different extensions for multiple files per
-         * class
-         */
-        apiTemplateFiles.put(
-                "controller-api.mustache",   // the template to use
-                ".go");       // the extension for each file to write
 
         /*
          * Template Location.  This is the location which templates will be read from.  The generator
@@ -121,6 +134,131 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         cliOptions.add(optServerPort);
 
         cliOptions.add(CliOption.newBoolean(CodegenConstants.ENUM_CLASS_PREFIX, CodegenConstants.ENUM_CLASS_PREFIX_DESC));
+    }
+
+    class ExtendedCodegenOperation extends CodegenOperation {
+      String pascalCasePath;
+      String httpMethodCAPS;
+      List<String> routeMiddlewares;
+      List<String> goQueryParams;
+      private final Logger LOGGER = LoggerFactory.getLogger(ExtendedCodegenOperation.class);
+
+
+      public ExtendedCodegenOperation(CodegenOperation o, List<String> middlewareNames) {
+        super();
+
+        this.responseHeaders.addAll(o.responseHeaders);
+        this.hasAuthMethods = o.hasAuthMethods;
+        this.hasConsumes = o.hasConsumes;
+        this.hasProduces = o.hasProduces;
+        this.hasParams = o.hasParams;
+        this.hasOptionalParams = o.hasOptionalParams;
+        this.hasRequiredParams = o.hasRequiredParams;
+        this.returnTypeIsPrimitive = o.returnTypeIsPrimitive;
+        this.returnSimpleType = o.returnSimpleType;
+        this.subresourceOperation = o.subresourceOperation;
+        this.isMap = o.isMap;
+        this.isArray = o.isArray;
+        this.isMultipart = o.isMultipart;
+        this.isResponseBinary = o.isResponseBinary;
+        this.isResponseFile = o.isResponseFile;
+        this.hasReference = o.hasReference;
+        this.isRestfulIndex = o.isRestfulIndex;
+        this.isRestfulShow = o.isRestfulShow;
+        this.isRestfulCreate = o.isRestfulCreate;
+        this.isRestfulUpdate = o.isRestfulUpdate;
+        this.isRestfulDestroy = o.isRestfulDestroy;
+        this.isRestful = o.isRestful;
+        this.isDeprecated = o.isDeprecated;
+        this.isCallbackRequest = o.isCallbackRequest;
+        this.uniqueItems = o.uniqueItems;
+        this.path = o.path;
+        this.operationId = o.operationId;
+        this.returnType = o.returnType;
+        this.returnFormat = o.returnFormat;
+        this.httpMethod = o.httpMethod;
+        this.returnBaseType = o.returnBaseType;
+        this.returnContainer = o.returnContainer;
+        this.summary = o.summary;
+        this.unescapedNotes = o.unescapedNotes;
+        this.notes = o.notes;
+        this.baseName = o.baseName;
+        this.defaultResponse = o.defaultResponse;
+        this.discriminator = o.discriminator;
+        this.consumes = o.consumes;
+        this.produces = o.produces;
+        this.prioritizedContentTypes = o.prioritizedContentTypes;
+        this.servers = o.servers;
+        this.bodyParam = o.bodyParam;
+        this.allParams = o.allParams;
+        this.bodyParams = o.bodyParams;
+        this.pathParams = o.pathParams;
+        this.queryParams = o.queryParams;
+        this.headerParams = o.headerParams;
+        this.formParams = o.formParams;
+        this.cookieParams = o.cookieParams;
+        this.requiredParams = o.requiredParams;
+        this.optionalParams = o.optionalParams;
+        this.authMethods = o.authMethods;
+        this.tags = o.tags;
+        this.responses = o.responses;
+        this.callbacks = o.callbacks;
+        this.imports = o.imports;
+        this.examples = o.examples;
+        this.requestBodyExamples = o.requestBodyExamples;
+        this.externalDocs = o.externalDocs;
+        this.vendorExtensions = o.vendorExtensions;
+        this.nickname = o.nickname;
+        this.operationIdOriginal = o.operationIdOriginal;
+        this.operationIdLowerCase = o.operationIdLowerCase;
+        this.operationIdCamelCase = o.operationIdCamelCase;
+        this.operationIdSnakeCase = o.operationIdSnakeCase;
+        this.pascalCasePath = this.pathAsPascalCase();
+        this.goQueryParams = new ArrayList<>();
+        this.httpMethodCAPS = o.httpMethod.toUpperCase();
+
+        //LOGGER.warn(o.);
+        for(CodegenParameter param : this.queryParams) {
+          this.goQueryParams.add(String.format("%s %s", param.paramName, param.dataType));
+        }
+
+        this.routeMiddlewares = middlewareNames;
+      }
+
+      /**
+       * Get the path as a PascalCased String
+       *
+       * @return the substring
+       */
+      private String pathAsPascalCase() {
+        Stream<String> words = Arrays.stream(path.split("/"));
+        return words.map(StringUtils::capitalize).reduce("", (accumulated, word) -> accumulated + word);
+      }
+    }
+
+    /**
+     * Convert OAS Operation object to Codegen Operation object
+     *
+     * @param httpMethod HTTP method
+     * @param operation  OAS operation object
+     * @param path       the path of the operation
+     * @param servers    list of servers
+     * @return Codegen Operation object
+     */
+    @Override
+    public CodegenOperation fromOperation(String path,
+                                          String httpMethod,
+                                          Operation operation,
+                                          List<Server> servers) {
+      CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
+      List<String> middlewares = new ArrayList<String>();
+      for (SecurityRequirement security : operation.getSecurity()) {
+        for(String key : security.keySet()) {
+          middlewares.add(formattedSecuritySchemeName(key));
+        }
+      }
+
+      return new ExtendedCodegenOperation(op, middlewares);
     }
 
     @Override
@@ -177,6 +315,16 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
             }
         }
 
+        ArrayList<String> routeMiddlewares = new ArrayList<String>();
+        Map<String, SecurityScheme> securitySchemeMap = openAPI.getComponents() != null ? openAPI.getComponents().getSecuritySchemes() : null;
+        if (securitySchemeMap != null) {
+          for (Map.Entry<String, SecurityScheme> security : securitySchemeMap.entrySet()) {
+           routeMiddlewares.add(formattedSecuritySchemeName(security.getKey()));
+          }
+        }
+
+        additionalProperties.put("routeMiddlewares", routeMiddlewares);
+
         modelPackage = packageName;
         apiPackage = packageName;
 
@@ -186,11 +334,15 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
          * it will be processed by the template engine.  Otherwise, it will be copied
          */
         supportingFiles.add(new SupportingFile("openapi.mustache", "api", "openapi.yaml"));
-        supportingFiles.add(new SupportingFile("main.mustache", "", "main.go"));
-        supportingFiles.add(new SupportingFile("Dockerfile.mustache", "", "Dockerfile"));
         supportingFiles.add(new SupportingFile("routers.mustache", apiPath, "routers.go"));
-        supportingFiles.add(new SupportingFile("README.mustache", apiPath, "README.md")
-                .doNotOverwrite());
+
+    }
+
+    protected String formattedSecuritySchemeName(String scheme) {
+        String[] rawParts = scheme.split("_");
+        List<String> rawPartsCapitalized = Arrays.stream(rawParts).map(StringUtils::capitalize).collect(Collectors.toList());
+
+        return String.join("", rawPartsCapitalized);
     }
 
     @Override
