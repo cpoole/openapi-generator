@@ -19,6 +19,7 @@ package org.openapitools.codegen.languages;
 import com.github.jknack.handlebars.internal.lang3.StringUtils;
 import io.swagger.v3.oas.models.parameters.CookieParameter;
 import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.parameters.QueryParameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
@@ -42,14 +43,17 @@ import org.openapitools.codegen.model.OperationsMap;
 import org.openapitools.codegen.utils.ModelUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import javafx.util.Pair;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -58,11 +62,12 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
 
     private final Logger LOGGER = LoggerFactory.getLogger(GoGinServerCodegen.class);
 
+    private final String birdAuthMiddlewareName = "bird_auth";
+
     protected String apiVersion = "1.0.0";
     protected int serverPort = 8080;
     protected String projectName = "openapi-server";
-    protected String apiPath = "go";
-    public String sup = "foo";
+    protected String apiPath = "generated-go-server";
 
     public GoGinServerCodegen() {
         super();
@@ -141,10 +146,25 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
       String httpMethodCAPS;
       List<String> routeMiddlewares;
       List<String> goQueryParams;
+
+      Set<String> extraImports;
+
+      Boolean hasBirdAuthMiddleware;
+
+      String interfaceMethodString;
+
+      String routerCallString;
+
+      // the entry into the auth route to allowed roles map
+      String routeAuthMapString;
+
+      // the string representing the golang object to bind to the parameters
+      String queryParamStructString;
+
       private final Logger LOGGER = LoggerFactory.getLogger(ExtendedCodegenOperation.class);
 
 
-      public ExtendedCodegenOperation(CodegenOperation o, List<String> middlewareNames) {
+      public ExtendedCodegenOperation(CodegenOperation o, List<SecurityRequirement> securityMiddlewares) {
         super();
 
         this.responseHeaders.addAll(o.responseHeaders);
@@ -216,13 +236,144 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         this.pascalCasePath = this.pathAsPascalCase();
         this.goQueryParams = new ArrayList<>();
         this.httpMethodCAPS = o.httpMethod.toUpperCase();
+        this.hasBirdAuthMiddleware = Boolean.FALSE;
+        this.routeMiddlewares = new ArrayList<String>();
+        this.extraImports = new HashSet<String>();
+
+        String httpMethod = StringUtils.capitalize(this.httpMethod.toLowerCase());
+
+        List<String> middlewares = new ArrayList<String>();
+        for (SecurityRequirement security : securityMiddlewares) {
+          for(String key : security.keySet()) {
+            middlewares.add(formattedSecuritySchemeName(key));
+          }
+        }
 
         //LOGGER.warn(o.);
         for(CodegenParameter param : this.queryParams) {
           this.goQueryParams.add(String.format("%s %s", param.paramName, param.dataType));
         }
 
-        this.routeMiddlewares = middlewareNames;
+        this.routerCallString = String.format("%s%s := func(ctx *gin.Context) {\n", this.pascalCasePath, httpMethod);
+
+        this.routeAuthMapString = String.format("\"%s\": ", this.path);
+
+
+        // securityMiddlewares is the
+        for (SecurityRequirement securityCollection: securityMiddlewares) {
+          for (String rawSecurityName: securityCollection.keySet()) {
+            //roles = securityCollection.get(security)
+            String middlewareName = formattedSecuritySchemeName(rawSecurityName);
+            if (middlewareName.equals(formattedSecuritySchemeName(birdAuthMiddlewareName))) {
+              this.hasBirdAuthMiddleware = Boolean.TRUE;
+              //this.extraImports.add("birdAuth \"go.bird.co/bird-common/common-gin-golang/middleware\"\n");
+              //this.extraImports.add("authStructs \"go.bird.co/bird-common/common-structs-golang/auth\"");
+
+              StringBuilder roleSliceBuilder = new StringBuilder("{");
+              for(String role: securityCollection.get(rawSecurityName)) {
+                roleSliceBuilder.append(String.format("authStructs.AUTH_ROLE_%s(),", StringUtils.capitalize(role)));
+              }
+              roleSliceBuilder.append("},");
+              this.routeAuthMapString += roleSliceBuilder.toString();
+            } else {
+              this.routeMiddlewares.add(middlewareName);
+            }
+          }
+        }
+
+
+        if (httpMethodCAPS.equals("PUT") || httpMethodCAPS.equals("POST")) {
+          this.interfaceMethodString = String.format("%s%s(ctx *gin.Context, body %s) (%s, error)",this.pascalCasePath, httpMethod, this.bodyParam.baseName, this.returnType);
+          this.routerCallString += String.format("bodyStruct := %s{}\n", this.bodyParam.dataType) +
+                          "err := ctx.BindJSON(&bodyStruct)\n" +
+                          "if err != nil {\n" +
+                          "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                          "  return\n" +
+                          "}\n" +
+                          String.format("result, err := handlers.%s%s(ctx, bodyStruct)\n", this.pascalCasePath, httpMethod) +
+                          "if err != nil {\n" +
+                          "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                          "  return\n" +
+                          "}\n" +
+                          "ctx.JSON(http.StatusOK, result)\n}\n";
+        } else {
+          String queryParamStructName = String.format("Param%s%s", httpMethod, this.pascalCasePath);
+          this.queryParamStructString = String.format("type %s struct {\n", queryParamStructName);
+
+          for(CodegenParameter param : this.queryParams) {
+            String paramType = param.dataType;
+            if (!param.required) {
+              paramType = String.format("*%s",paramType);
+            }
+            this.queryParamStructString += String.format("\t%s %s `form:\"%s\"`\n", StringUtils.capitalize(param.paramName), paramType, param.paramName);
+          }
+
+          this.queryParamStructString += "}";
+
+          this.interfaceMethodString = String.format("%s%s(ctx *gin.Context, params %s) (%s, error)",this.pascalCasePath, httpMethod, queryParamStructName, this.returnType);
+
+          String paramParse = String.format(
+                  "params := %s{}\n" +
+                  "err := ctx.Bind(&params)\n" +
+                  "if err != nil {\n" +
+                  "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                  "  return\n" +
+                  "}\n", queryParamStructName);
+
+
+          this.routerCallString += paramParse +
+                String.format("result, err := handlers.%s%s(ctx, params)\n", this.pascalCasePath, httpMethod) +
+                "if err != nil {\n" +
+                "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                "  return\n" +
+                "}\n" +
+                "ctx.JSON(http.StatusOK, result)\n}\n";
+        }
+      }
+
+      private Pair<String,ArrayList<String>> parseParam(CodegenParameter param) {
+        ArrayList<String> strconvImport = new ArrayList<String>(Collections.singletonList("\"strconv\""));
+        switch (param.dataType) {
+          case "string":
+            return new Pair<>(String.format("%s := ctx.Param(\"%s\")\n", param.paramName, param.paramName), new ArrayList<>());
+          case "int32":
+            return new Pair<>(String.format("%s64, err := strconv.ParseInt(ctx.Param(\"%s\"), 10, 32)\n" +
+                    "if err != nil {\n" +
+                    "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                    "  return\n" +
+                    "}\n" +
+                    "%s := int32(%s64)\n", param.paramName, param.paramName, param.paramName,param.paramName), strconvImport);
+          case "int64":
+            return new Pair<>(String.format("%s, err := strconv.ParseInt(ctx.Param(\"%s\"), 10, 64)\n" +
+                    "if err != nil {\n" +
+                    "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+                    "  return\n" +
+                    "}\n", param.paramName,param.paramName), strconvImport);
+          case "array":
+          case "object":
+          case "float32":
+            return new Pair<>(String.format("%s64, err := strconv.ParseFloat(ctx.Param(\"%s\"), 32)\n" +
+              "if err != nil {\n" +
+              "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+              "  return\n" +
+              "}\n" +
+              "%s := float32(%s64)\n", param.paramName, param.paramName, param.paramName,param.paramName), strconvImport);
+          case "float64":
+            return new Pair<>(String.format("%s64, err := strconv.ParseFloat(ctx.Param(\"%s\"), 32)\n" +
+              "if err != nil {\n" +
+              "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+              "  return\n" +
+              "}\n", param.paramName,param.paramName), strconvImport);
+          case "bool":
+             return new Pair<>(String.format("%s, err := strconv.ParseBool(ctx.Param(\"%s\"))\n" +
+              "if err != nil {\n" +
+              "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
+              "  return\n" +
+              "}\n", param.paramName, param.paramName), strconvImport);
+
+        }
+
+        return new Pair<>("", new ArrayList<>());
       }
 
       /**
@@ -251,14 +402,8 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
                                           Operation operation,
                                           List<Server> servers) {
       CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
-      List<String> middlewares = new ArrayList<String>();
-      for (SecurityRequirement security : operation.getSecurity()) {
-        for(String key : security.keySet()) {
-          middlewares.add(formattedSecuritySchemeName(key));
-        }
-      }
 
-      return new ExtendedCodegenOperation(op, middlewares);
+      return new ExtendedCodegenOperation(op, operation.getSecurity());
     }
 
     @Override
@@ -282,7 +427,7 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         if (additionalProperties.containsKey(CodegenConstants.PACKAGE_NAME)) {
             setPackageName((String) additionalProperties.get(CodegenConstants.PACKAGE_NAME));
         } else {
-            setPackageName("openapi");
+            setPackageName("genserver");
             additionalProperties.put(CodegenConstants.PACKAGE_NAME, this.packageName);
         }
 
@@ -315,15 +460,18 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
             }
         }
 
+        // bird auth middleware is a special middlware. We're going to inject that middleware independently
         ArrayList<String> routeMiddlewares = new ArrayList<String>();
         Map<String, SecurityScheme> securitySchemeMap = openAPI.getComponents() != null ? openAPI.getComponents().getSecuritySchemes() : null;
         if (securitySchemeMap != null) {
           for (Map.Entry<String, SecurityScheme> security : securitySchemeMap.entrySet()) {
-           routeMiddlewares.add(formattedSecuritySchemeName(security.getKey()));
+            if (!Objects.equals(security.getKey(), birdAuthMiddlewareName)) {
+              routeMiddlewares.add(formattedSecuritySchemeName(security.getKey()));
+            }
           }
         }
 
-        additionalProperties.put("routeMiddlewares", routeMiddlewares);
+        additionalProperties.put("uniqueRouteMiddlewares", routeMiddlewares);
 
         modelPackage = packageName;
         apiPackage = packageName;

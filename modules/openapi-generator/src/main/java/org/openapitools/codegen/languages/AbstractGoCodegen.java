@@ -49,7 +49,7 @@ public abstract class AbstractGoCodegen extends DefaultCodegen implements Codege
     protected boolean structPrefix = false;
     protected boolean generateInterfaces = false;
 
-    protected String packageName = "openapi";
+    protected String packageName = "genserver";
     protected Set<String> numberTypes;
 
     protected boolean usesOptionals = true;
@@ -148,7 +148,7 @@ public abstract class AbstractGoCodegen extends DefaultCodegen implements Codege
 
         cliOptions.clear();
         cliOptions.add(new CliOption(CodegenConstants.PACKAGE_NAME, "Go package name (convention: lowercase).")
-                .defaultValue("openapi"));
+                .defaultValue("genserver"));
         cliOptions.add(new CliOption(CodegenConstants.PACKAGE_VERSION, "Go package version.")
                 .defaultValue("1.0.0"));
         cliOptions.add(new CliOption(CodegenConstants.HIDE_GENERATION_TIMESTAMP, CodegenConstants.HIDE_GENERATION_TIMESTAMP_DESC)

@@ -5,35 +5,42 @@ import (
     "net/http"
 	"github.com/gin-gonic/gin"
     l "go.bird.co/bird-common/common-logging-golang"
+
+    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}{{#extraImports}}
+        {{{.}}}
+    {{/extraImports}}{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+
+    birdAuth "go.bird.co/bird-common/common-gin-golang/middleware"
+    authStructs "go.bird.co/bird-common/common-structs-golang/auth"
 )
+
+var RouteAuthMap = map[string][]authStructs.AuthRole{
+{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+    {{{routeAuthMapString}}}
+{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+}
+
+{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+{{{queryParamStructString}}}
+{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
 
 type EngineHandlers interface {
     {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-    {{pathAsPascalCase}}{{httpMethod}}(ctx *gin.Context, {{#goQueryParams}}{{.}},{{/goQueryParams}}) ({{returnType}}, error)
+    {{interfaceMethodString}}
     {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
 
-    {{#routeMiddlewares}}
+    {{#uniqueRouteMiddlewares}}
         {{.}}(ctx *gin.Context)
-    {{/routeMiddlewares}}
+    {{/uniqueRouteMiddlewares}}
 }
 
-func RegisterRoutes(engine *gin.Engine, handlers EngineHandlers) error {
+func RegisterRoutes(engine *gin.Engine, handlers EngineHandlers, authBundle *birdAuth.AuthBundle) error {
     engine.Use(l.GinLogrusMiddleware(l.Logger), gin.Recovery())
 
     {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-    {{pathAsPascalCase}}{{httpMethod}} := func(ctx *gin.Context) {
-        {{#queryParams}}
-            {{paramName}} := ctx.Param("{{paramName}}")
-        {{/queryParams}}
-        result, err := handlers.{{pathAsPascalCase}}{{httpMethod}}(ctx, {{#queryParams}}{{paramName}}{{/queryParams}})
-        if err != nil {
-            ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error})
-        }
+    {{{routerCallString}}}
 
-        ctx.JSON(http.StatusOK, result)
-    }
-
-    engine.{{httpMethodCAPS}}("{{path}}", {{#routeMiddlewares}}handlers.{{.}},{{/routeMiddlewares}} handlers.{{pathAsPascalCase}}{{httpMethod}})
+    engine.{{httpMethodCAPS}}("{{path}}", {{#routeMiddlewares}}handlers.{{.}},{{/routeMiddlewares}} {{pathAsPascalCase}}{{httpMethod}})
     {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
 
     return nil
