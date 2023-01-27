@@ -141,6 +141,11 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         cliOptions.add(CliOption.newBoolean(CodegenConstants.ENUM_CLASS_PREFIX, CodegenConstants.ENUM_CLASS_PREFIX_DESC));
     }
 
+    public static String pathSanitizer(String input) {
+      Stream<String> words = Arrays.stream(input.split("-"));
+      return words.map(StringUtils::capitalize).reduce("", (accumulated, word) -> accumulated + word);
+    }
+
     class ExtendedCodegenOperation extends CodegenOperation {
       String pascalCasePath;
       String httpMethodCAPS;
@@ -164,7 +169,7 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
       private final Logger LOGGER = LoggerFactory.getLogger(ExtendedCodegenOperation.class);
 
 
-      public ExtendedCodegenOperation(CodegenOperation o, List<SecurityRequirement> securityMiddlewares) {
+      public ExtendedCodegenOperation(CodegenOperation o, List<SecurityRequirement> securityMiddlewares) throws Exception {
         super();
 
         this.responseHeaders.addAll(o.responseHeaders);
@@ -242,41 +247,45 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
 
         String httpMethod = StringUtils.capitalize(this.httpMethod.toLowerCase());
 
-        List<String> middlewares = new ArrayList<String>();
-        for (SecurityRequirement security : securityMiddlewares) {
-          for(String key : security.keySet()) {
-            middlewares.add(formattedSecuritySchemeName(key));
-          }
-        }
-
-        //LOGGER.warn(o.);
+       //LOGGER.warn(o.);
         for(CodegenParameter param : this.queryParams) {
           this.goQueryParams.add(String.format("%s %s", param.paramName, param.dataType));
         }
 
         this.routerCallString = String.format("%s%s := func(ctx *gin.Context) {\n", this.pascalCasePath, httpMethod);
 
-        this.routeAuthMapString = String.format("\"%s\": ", this.path);
+        // managing bird auth middleware
+        if (securityMiddlewares == null && !Objects.equals(this.path, "/healthcheck")) {
+          throw new Exception("non-healcheck endpoints must have security");
+        }
+
+        if (securityMiddlewares != null) {
+
+          List<String> middlewares = new ArrayList<String>();
+          for (SecurityRequirement security : securityMiddlewares) {
+            for (String key : security.keySet()) {
+              middlewares.add(formattedSecuritySchemeName(key));
+            }
+          }
 
 
-        // securityMiddlewares is the
-        for (SecurityRequirement securityCollection: securityMiddlewares) {
-          for (String rawSecurityName: securityCollection.keySet()) {
-            //roles = securityCollection.get(security)
-            String middlewareName = formattedSecuritySchemeName(rawSecurityName);
-            if (middlewareName.equals(formattedSecuritySchemeName(birdAuthMiddlewareName))) {
-              this.hasBirdAuthMiddleware = Boolean.TRUE;
-              //this.extraImports.add("birdAuth \"go.bird.co/bird-common/common-gin-golang/middleware\"\n");
-              //this.extraImports.add("authStructs \"go.bird.co/bird-common/common-structs-golang/auth\"");
+          for (SecurityRequirement securityCollection : securityMiddlewares) {
+            for (String rawSecurityName : securityCollection.keySet()) {
+              String middlewareName = formattedSecuritySchemeName(rawSecurityName);
+              if (middlewareName.equals(formattedSecuritySchemeName(birdAuthMiddlewareName))) {
+                this.routeAuthMapString = String.format("\"%s\": ", this.path);
 
-              StringBuilder roleSliceBuilder = new StringBuilder("{");
-              for(String role: securityCollection.get(rawSecurityName)) {
-                roleSliceBuilder.append(String.format("authStructs.AUTH_ROLE_%s(),", StringUtils.capitalize(role)));
+                this.hasBirdAuthMiddleware = Boolean.TRUE;
+
+                StringBuilder roleSliceBuilder = new StringBuilder("{");
+                for (String role : securityCollection.get(rawSecurityName)) {
+                  roleSliceBuilder.append(String.format("authStructs.AUTH_ROLE_%s(),", StringUtils.capitalize(role)));
+                }
+                roleSliceBuilder.append("},");
+                this.routeAuthMapString += roleSliceBuilder.toString();
+              } else {
+                this.routeMiddlewares.add(middlewareName);
               }
-              roleSliceBuilder.append("},");
-              this.routeAuthMapString += roleSliceBuilder.toString();
-            } else {
-              this.routeMiddlewares.add(middlewareName);
             }
           }
         }
@@ -314,7 +323,7 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
 
           String paramParse = String.format(
                   "params := %s{}\n" +
-                  "err := ctx.Bind(&params)\n" +
+                  "err := ctx.BindQuery(&params)\n" +
                   "if err != nil {\n" +
                   "  ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\"error\": err.Error})\n" +
                   "  return\n" +
@@ -376,6 +385,7 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
         return new Pair<>("", new ArrayList<>());
       }
 
+
       /**
        * Get the path as a PascalCased String
        *
@@ -383,7 +393,7 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
        */
       private String pathAsPascalCase() {
         Stream<String> words = Arrays.stream(path.split("/"));
-        return words.map(StringUtils::capitalize).reduce("", (accumulated, word) -> accumulated + word);
+        return words.map(GoGinServerCodegen::pathSanitizer).reduce("", (accumulated, word) -> accumulated + word);
       }
     }
 
@@ -402,8 +412,11 @@ public class GoGinServerCodegen extends AbstractGoCodegen {
                                           Operation operation,
                                           List<Server> servers) {
       CodegenOperation op = super.fromOperation(path, httpMethod, operation, servers);
-
-      return new ExtendedCodegenOperation(op, operation.getSecurity());
+      try {
+        return new ExtendedCodegenOperation(op, operation.getSecurity());
+      } catch (Exception e) {
+        return op;
+      }
     }
 
     @Override
