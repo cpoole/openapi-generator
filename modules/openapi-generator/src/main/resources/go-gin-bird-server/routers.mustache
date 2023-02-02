@@ -1,0 +1,48 @@
+{{>partial_header}}
+package {{packageName}}
+
+import (
+    "net/http"
+	"github.com/gin-gonic/gin"
+    l "go.bird.co/bird-common/common-logging-golang"
+
+    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}{{#extraImports}}
+        {{{.}}}
+    {{/extraImports}}{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+
+    birdAuth "go.bird.co/bird-common/common-gin-golang/middleware"
+    authStructs "go.bird.co/bird-common/common-structs-golang/auth"
+)
+
+var RouteAuthMap = map[string][]authStructs.AuthRole{
+{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+    {{{routeAuthMapString}}}
+{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+}
+
+{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+{{{queryParamStructString}}}
+{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+
+type EngineHandlers interface {
+    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+    {{interfaceMethodString}}
+    {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+
+    {{#uniqueRouteMiddlewares}}
+        {{.}}(ctx *gin.Context)
+    {{/uniqueRouteMiddlewares}}
+}
+
+func RegisterRoutes(engine *gin.Engine, handlers EngineHandlers, authBundle *birdAuth.AuthBundle) error {
+    engine.Use(l.GinLogrusMiddleware(l.Logger), gin.Recovery())
+
+    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+    {{{routerCallString}}}
+
+    engine.{{httpMethodCAPS}}("{{path}}", {{#routeMiddlewares}}handlers.{{.}},{{/routeMiddlewares}} {{pathAsPascalCase}}{{httpMethod}})
+    {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+
+    return nil
+}
+

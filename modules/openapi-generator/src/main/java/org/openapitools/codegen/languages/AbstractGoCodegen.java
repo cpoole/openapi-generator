@@ -49,7 +49,7 @@ public abstract class AbstractGoCodegen extends DefaultCodegen implements Codege
     protected boolean structPrefix = false;
     protected boolean generateInterfaces = false;
 
-    protected String packageName = "genserver";
+    protected String packageName = "openapi";
     protected Set<String> numberTypes;
 
     protected boolean usesOptionals = true;
