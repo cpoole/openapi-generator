@@ -2,47 +2,64 @@
 package {{packageName}}
 
 import (
-    "net/http"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
-    l "go.bird.co/bird-common/common-logging-golang"
-
-    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}{{#extraImports}}
-        {{{.}}}
-    {{/extraImports}}{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
-
-    birdAuth "go.bird.co/bird-common/common-gin-golang/middleware"
-    authStructs "go.bird.co/bird-common/common-structs-golang/auth"
 )
 
-var RouteAuthMap = map[string][]authStructs.AuthRole{
-{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-    {{{routeAuthMapString}}}
-{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+// Route is the information for every URI.
+type Route struct {
+	// Name is the name of this Route.
+	Name        string
+	// Method is the string for the HTTP method. ex) GET, POST etc..
+	Method      string
+	// Pattern is the pattern of the URI.
+	Pattern     string
+	// HandlerFunc is the handler function of this route.
+	HandlerFunc gin.HandlerFunc
 }
 
-{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-{{{queryParamStructString}}}
-{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+// Routes is the list of the generated Route.
+type Routes []Route
 
-type EngineHandlers interface {
-    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-    {{interfaceMethodString}}
-    {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+// NewRouter returns a new router.
+func NewRouter() *gin.Engine {
+	router := gin.Default()
+	for _, route := range routes {
+		switch route.Method {
+		case http.MethodGet:
+			router.GET(route.Pattern, route.HandlerFunc)
+		case http.MethodPost:
+			router.POST(route.Pattern, route.HandlerFunc)
+		case http.MethodPut:
+			router.PUT(route.Pattern, route.HandlerFunc)
+		case http.MethodPatch:
+			router.PATCH(route.Pattern, route.HandlerFunc)
+		case http.MethodDelete:
+			router.DELETE(route.Pattern, route.HandlerFunc)
+		}
+	}
 
-    {{#uniqueRouteMiddlewares}}
-        {{.}}(ctx *gin.Context)
-    {{/uniqueRouteMiddlewares}}
+	return router
 }
 
-func RegisterRoutes(engine *gin.Engine, handlers EngineHandlers, authBundle *birdAuth.AuthBundle) error {
-    engine.Use(l.GinLogrusMiddleware(l.Logger), gin.Recovery())
-
-    {{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
-    {{{routerCallString}}}
-
-    engine.{{httpMethodCAPS}}("{{path}}", {{#routeMiddlewares}}handlers.{{.}},{{/routeMiddlewares}} {{pathAsPascalCase}}{{httpMethod}})
-    {{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
-
-    return nil
+// Index is the index handler.
+func Index(c *gin.Context) {
+	c.String(http.StatusOK, "Hello World!")
 }
 
+var routes = Routes{
+	{
+		"Index",
+		http.MethodGet,
+		"{{{basePathWithoutHost}}}/",
+		Index,
+	},{{#apiInfo}}{{#apis}}{{#operations}}{{#operation}}
+
+	{
+		"{{operationId}}",
+		http.Method{{httpMethod}},
+		"{{{basePathWithoutHost}}}{{{path}}}",
+		{{operationId}},
+	},{{/operation}}{{/operations}}{{/apis}}{{/apiInfo}}
+}
